@@ -63,38 +63,25 @@ public class ItemMeanModelProvider implements Provider<ItemMeanModel> {
 
         try (ObjectStream<Rating> ratings = dao.query(Rating.class).stream()) {
             for (Rating r : ratings) {
-                sumRatings.computeIfAbsent(r.getItemId(), new Function<Long, DoubleAccumulator>() {
-                    @Override
-                    public DoubleAccumulator apply(Long aLong) {
-                        return new DoubleAccumulator(new DoubleBinaryOperator() {
-                            @Override
-                            public double applyAsDouble(double left, double right) {
-                                return left + right;
-                            }
-                        }, 0.0);
-                    }
-                }).accumulate(r.getValue());
+                sumRatings.computeIfAbsent(
+                        r.getItemId(),
+                        acc -> new DoubleAccumulator(Double::sum, 0.0)).accumulate(r.getValue());
 
-                itemCounts.merge(r.getItemId(), 1, new BiFunction<Integer, Integer, Integer>() {
-                    @Override
-                    public Integer apply(Integer oldValue, Integer valueToAdd) {
-                        return oldValue + valueToAdd;
-                    }
-                });
+                itemCounts.merge(r.getItemId(), 1, Integer::sum);
             }
         }
 
         final Long2DoubleOpenHashMap means = new Long2DoubleOpenHashMap();
-        sumRatings.forEach(new BiConsumer<Long, DoubleAccumulator>() {
-            @Override
-            public void accept(Long itemId, DoubleAccumulator acc) {
-               int total = itemCounts.getOrDefault(itemId, 0);
-               if (total > 0) {
-                   Double mean = acc.get() / total;
-                   means.put(itemId, mean);
-               }
+
+        for (Map.Entry<Long, DoubleAccumulator> entry : sumRatings.entrySet()) {
+            Long itemId = entry.getKey();
+            DoubleAccumulator acc = entry.getValue();
+            int total = itemCounts.getOrDefault(itemId, 0);
+            if (total > 0) {
+                Double mean = acc.get() / total;
+                means.put(itemId, mean);
             }
-        });
+        }
 
         logger.info("computed mean ratings for {} items", means.size());
         return new ItemMeanModel(means);

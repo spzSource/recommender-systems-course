@@ -73,51 +73,26 @@ public class DampedItemMeanModelProvider implements Provider<ItemMeanModel> {
 
             for (Rating r : ratings) {
                 globalCount = globalCount + 1;
-                sumRatings.computeIfAbsent(r.getItemId(), new Function<Long, DoubleAccumulator>() {
-                    @Override
-                    public DoubleAccumulator apply(Long aLong) {
-                        return new DoubleAccumulator(new DoubleBinaryOperator() {
-                            @Override
-                            public double applyAsDouble(double left, double right) {
-                                return left + right;
-                            }
-                        }, 0.0);
-                    }
-                }).accumulate(r.getValue());
+                sumRatings.computeIfAbsent(r.getItemId(), aLong -> new DoubleAccumulator(Double::sum, 0.0)).accumulate(r.getValue());
 
-                itemCounts.merge(r.getItemId(), 1, new BiFunction<Integer, Integer, Integer>() {
-                    @Override
-                    public Integer apply(Integer oldValue, Integer valueToAdd) {
-                        return oldValue + valueToAdd;
-                    }
-                });
+                itemCounts.merge(r.getItemId(), 1, Integer::sum);
             }
         }
 
-        final Double globalMean = sumRatings.values().stream().map(new Function<DoubleAccumulator, Double>() {
-            @Override
-            public Double apply(DoubleAccumulator doubleAccumulator) {
-                return doubleAccumulator.get();
-            }
-        }).reduce(0.0, new BinaryOperator<Double>() {
-            @Override
-            public Double apply(Double aDouble, Double aDouble2) {
-                return aDouble + aDouble2;
-            }
-        }) / globalCount;
+        final Double globalMean = sumRatings.values().stream().map(DoubleAccumulator::get).reduce(0.0, Double::sum) / globalCount;
 
         final Double d = this.damping;
         final Long2DoubleOpenHashMap means = new Long2DoubleOpenHashMap();
-        sumRatings.forEach(new BiConsumer<Long, DoubleAccumulator>() {
-            @Override
-            public void accept(Long itemId, DoubleAccumulator acc) {
-                int total = itemCounts.getOrDefault(itemId, 0);
-                if (total > 0) {
-                    Double mean = (acc.get() +  d * globalMean) / (total + damping);
-                    means.put(itemId, mean);
-                }
+
+        for (Map.Entry<Long, DoubleAccumulator> entry : sumRatings.entrySet()) {
+            Long itemId = entry.getKey();
+            DoubleAccumulator acc = entry.getValue();
+            int total = itemCounts.getOrDefault(itemId, 0);
+            if (total > 0) {
+                Double mean = (acc.get() + d * globalMean) / (total + damping);
+                means.put(itemId, mean);
             }
-        });
+        }
 
         logger.info("computed mean ratings for {} items", means.size());
         return new ItemMeanModel(means);

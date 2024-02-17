@@ -84,24 +84,13 @@ public class MeanItemBasedItemRecommender extends AbstractItemBasedItemRecommend
      * @return A {@link ResultMap} containing the scores.
      */
     private ResultList recommendItems(int n, LongSet items) {
-        List<Result> results = new ArrayList<>();
+        List<Result> results = items.stream()
+                .filter(model::hasItem)
+                .map(e -> Results.create(e, model.getMeanRating(e)))
+                .sorted((o1, o2) -> Double.compare(o1.getScore(), o2.getScore()) * -1)
+                .limit(n)
+                .collect(Collectors.toList());
 
-        for (Long item : items) {
-            if (model.hasItem(item)) {
-                Double mean = model.getMeanRating(item);
-                results.add(Results.create(item, mean));
-            }
-        }
-
-        results.sort(new Comparator<Result>() {
-            @Override
-            public int compare(Result o1, Result o2) {
-                if (o1.getScore() == o2.getScore()) return 0;
-                if (o1.getScore() > o2.getScore()) return -1;
-                return 1;
-            }
-        });
-
-        return Results.newResultList(results.subList(0, n));
+        return Results.newResultList(results);
     }
 }

@@ -14,6 +14,7 @@ import javax.inject.Inject;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * An item-based item scorer that uses association rules.
@@ -58,15 +59,19 @@ public class AssociationItemBasedItemRecommender extends AbstractItemBasedItemRe
 
     /**
      * Recommend items with an association rule.
-     * @param n The number of recommendations to produce.
-     * @param refItem The reference item.
+     *
+     * @param n          The number of recommendations to produce.
+     * @param refItem    The reference item.
      * @param candidates The candidate items (set of items that can possibly be recommended).
      * @return The list of results.
      */
     private ResultList recommendItems(int n, long refItem, LongSet candidates) {
-        List<Result> results = new ArrayList<>();
-
-        // TODO Compute the n highest-scoring items from candidates
+        List<Result> results = candidates.stream()
+                .filter(model::hasItem)
+                .map(e -> Results.create(e, model.getItemAssociation(refItem, e)))
+                .sorted((o1, o2) -> Double.compare(o1.getScore(), o2.getScore()) * -1)
+                .limit(n)
+                .collect(Collectors.toList());
 
         return Results.newResultList(results);
     }
