@@ -12,9 +12,10 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * An item scorer that scores each item with its mean rating.
@@ -40,7 +41,7 @@ public class MeanItemBasedItemRecommender extends AbstractItemBasedItemRecommend
 
     /**
      * {@inheritDoc}
-     *
+     * <p>
      * This is the LensKit recommend method.  It takes several parameters; we implement it for you in terms of a
      * simpler method ({@link #recommendItems(int, LongSet)}).
      */
@@ -78,15 +79,29 @@ public class MeanItemBasedItemRecommender extends AbstractItemBasedItemRecommend
      *     <li>Convert the list of results to a {@link ResultList} using {@link Results#newResultList(List)}.</li>
      * </ol>
      *
-     * @param n The number of items to recommend.  If this is negative, then recommend all possible items.
+     * @param n     The number of items to recommend.  If this is negative, then recommend all possible items.
      * @param items The items to score.
      * @return A {@link ResultMap} containing the scores.
      */
     private ResultList recommendItems(int n, LongSet items) {
         List<Result> results = new ArrayList<>();
 
-        // TODO Find the top N items by mean rating
+        for (Long item : items) {
+            if (model.hasItem(item)) {
+                Double mean = model.getMeanRating(item);
+                results.add(Results.create(item, mean));
+            }
+        }
 
-        return Results.newResultList(results);
+        results.sort(new Comparator<Result>() {
+            @Override
+            public int compare(Result o1, Result o2) {
+                if (o1.getScore() == o2.getScore()) return 0;
+                if (o1.getScore() > o2.getScore()) return -1;
+                return 1;
+            }
+        });
+
+        return Results.newResultList(results.subList(0, n));
     }
 }

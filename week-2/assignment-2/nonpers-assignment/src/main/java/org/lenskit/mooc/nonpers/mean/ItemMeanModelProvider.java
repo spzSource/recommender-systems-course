@@ -11,6 +11,13 @@ import org.slf4j.LoggerFactory;
 
 import javax.inject.Inject;
 import javax.inject.Provider;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.DoubleAccumulator;
+import java.util.function.BiConsumer;
+import java.util.function.BiFunction;
+import java.util.function.DoubleBinaryOperator;
+import java.util.function.Function;
 
 /**
  * Provider class that builds the mean rating item scorer, computing item means from the
@@ -51,17 +58,43 @@ public class ItemMeanModelProvider implements Provider<ItemMeanModel> {
      */
     @Override
     public ItemMeanModel get() {
-        // TODO Set up data structures for computing means
+        final Map<Long, DoubleAccumulator> sumRatings = new HashMap<>();
+        final Map<Long, Integer> itemCounts = new HashMap<>();
 
         try (ObjectStream<Rating> ratings = dao.query(Rating.class).stream()) {
-            for (Rating r: ratings) {
-                // this loop will run once for each rating in the data set
-                // TODO process this rating
+            for (Rating r : ratings) {
+                sumRatings.computeIfAbsent(r.getItemId(), new Function<Long, DoubleAccumulator>() {
+                    @Override
+                    public DoubleAccumulator apply(Long aLong) {
+                        return new DoubleAccumulator(new DoubleBinaryOperator() {
+                            @Override
+                            public double applyAsDouble(double left, double right) {
+                                return left + right;
+                            }
+                        }, 0.0);
+                    }
+                }).accumulate(r.getValue());
+
+                itemCounts.merge(r.getItemId(), 1, new BiFunction<Integer, Integer, Integer>() {
+                    @Override
+                    public Integer apply(Integer oldValue, Integer valueToAdd) {
+                        return oldValue + valueToAdd;
+                    }
+                });
             }
         }
 
-        Long2DoubleOpenHashMap means = new Long2DoubleOpenHashMap();
-        // TODO Finalize means to store them in the mean model
+        final Long2DoubleOpenHashMap means = new Long2DoubleOpenHashMap();
+        sumRatings.forEach(new BiConsumer<Long, DoubleAccumulator>() {
+            @Override
+            public void accept(Long itemId, DoubleAccumulator acc) {
+               int total = itemCounts.getOrDefault(itemId, 0);
+               if (total > 0) {
+                   Double mean = acc.get() / total;
+                   means.put(itemId, mean);
+               }
+            }
+        });
 
         logger.info("computed mean ratings for {} items", means.size());
         return new ItemMeanModel(means);

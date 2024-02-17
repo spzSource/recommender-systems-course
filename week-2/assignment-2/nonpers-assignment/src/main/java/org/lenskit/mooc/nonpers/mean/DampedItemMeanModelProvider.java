@@ -12,6 +12,10 @@ import org.slf4j.LoggerFactory;
 
 import javax.inject.Inject;
 import javax.inject.Provider;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.DoubleAccumulator;
+import java.util.function.*;
 
 /**
  * Provider class that builds the mean rating item scorer, computing damped item means from the
@@ -61,8 +65,61 @@ public class DampedItemMeanModelProvider implements Provider<ItemMeanModel> {
      */
     @Override
     public ItemMeanModel get() {
-        // TODO Compute damped means
-        // TODO Remove the line below when you have finished
-        throw new UnsupportedOperationException("damped mean not implemented");
+        final Map<Long, DoubleAccumulator> sumRatings = new HashMap<>();
+        final Map<Long, Integer> itemCounts = new HashMap<>();
+        int globalCount = 0;
+
+        try (ObjectStream<Rating> ratings = dao.query(Rating.class).stream()) {
+
+            for (Rating r : ratings) {
+                globalCount = globalCount + 1;
+                sumRatings.computeIfAbsent(r.getItemId(), new Function<Long, DoubleAccumulator>() {
+                    @Override
+                    public DoubleAccumulator apply(Long aLong) {
+                        return new DoubleAccumulator(new DoubleBinaryOperator() {
+                            @Override
+                            public double applyAsDouble(double left, double right) {
+                                return left + right;
+                            }
+                        }, 0.0);
+                    }
+                }).accumulate(r.getValue());
+
+                itemCounts.merge(r.getItemId(), 1, new BiFunction<Integer, Integer, Integer>() {
+                    @Override
+                    public Integer apply(Integer oldValue, Integer valueToAdd) {
+                        return oldValue + valueToAdd;
+                    }
+                });
+            }
+        }
+
+        final Double globalMean = sumRatings.values().stream().map(new Function<DoubleAccumulator, Double>() {
+            @Override
+            public Double apply(DoubleAccumulator doubleAccumulator) {
+                return doubleAccumulator.get();
+            }
+        }).reduce(0.0, new BinaryOperator<Double>() {
+            @Override
+            public Double apply(Double aDouble, Double aDouble2) {
+                return aDouble + aDouble2;
+            }
+        }) / globalCount;
+
+        final Double d = this.damping;
+        final Long2DoubleOpenHashMap means = new Long2DoubleOpenHashMap();
+        sumRatings.forEach(new BiConsumer<Long, DoubleAccumulator>() {
+            @Override
+            public void accept(Long itemId, DoubleAccumulator acc) {
+                int total = itemCounts.getOrDefault(itemId, 0);
+                if (total > 0) {
+                    Double mean = (acc.get() +  d * globalMean) / (total + damping);
+                    means.put(itemId, mean);
+                }
+            }
+        });
+
+        logger.info("computed mean ratings for {} items", means.size());
+        return new ItemMeanModel(means);
     }
 }
