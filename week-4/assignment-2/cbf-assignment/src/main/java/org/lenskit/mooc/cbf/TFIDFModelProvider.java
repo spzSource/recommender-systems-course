@@ -1,5 +1,6 @@
 package org.lenskit.mooc.cbf;
 
+import groovy.sql.Sql;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import org.lenskit.data.dao.DataAccessObject;
 import org.lenskit.data.entities.CommonTypes;
@@ -65,7 +66,11 @@ public class TFIDFModelProvider implements Provider<TFIDFModel> {
                 String tag = tagApplication.get(TagData.TAG);
                 // TODO Count this tag application in the term frequency vector
                 // TODO Also count it in the document frequencey vector when needed
+                work.compute(tag, (k, v) -> (v == null) ? 1.0 : v + 1);
+
             }
+
+            work.keySet().forEach(k -> docFreq.compute(k, (tg, dc) -> (dc == null) ? 1 : dc + 1));
 
             itemVectors.put(item, work);
         }
@@ -91,6 +96,15 @@ public class TFIDFModelProvider implements Provider<TFIDFModel> {
             // TODO Normalize the TF-IDF vector to be a unit vector
             // Normalize it by dividing each element by its Euclidean norm, which is the
             // square root of the sum of the squares of the values.
+            for (Map.Entry<String, Double> itemEntry : entry.getValue().entrySet()) {
+                String tag = itemEntry.getKey();
+                tv.put(tag, itemEntry.getValue() * docFreq.get(tag));
+            }
+
+            Double norm = Math.sqrt(tv.values().stream().map(e -> Math.pow(e, 2)).reduce(0.0, Double::sum));
+            for (Map.Entry<String, Double> tvEntry : tv.entrySet()) {
+                tvEntry.setValue(tvEntry.getValue() / norm);
+            }
 
             modelData.put(entry.getKey(), tv);
         }

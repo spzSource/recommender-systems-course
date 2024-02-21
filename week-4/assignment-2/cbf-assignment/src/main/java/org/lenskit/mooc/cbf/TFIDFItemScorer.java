@@ -42,16 +42,16 @@ public class TFIDFItemScorer extends AbstractItemScorer {
      * Generate item scores personalized for a particular user.  For the TFIDF scorer, this will
      * prepare a user profile and compare it to item tag vectors to produce the score.
      *
-     * @param user   The user to score for.
-     * @param items  A collection of item ids that should be scored.
+     * @param user  The user to score for.
+     * @param items A collection of item ids that should be scored.
      */
     @Nonnull
     @Override
-    public ResultMap scoreWithDetails(long user, @Nonnull Collection<Long> items){
+    public ResultMap scoreWithDetails(long user, @Nonnull Collection<Long> items) {
         // Get the user's ratings
         List<Rating> ratings = dao.query(Rating.class)
-                                  .withAttribute(CommonAttributes.USER_ID, user)
-                                  .get();
+                .withAttribute(CommonAttributes.USER_ID, user)
+                .get();
 
         if (ratings == null) {
             // the user doesn't exist, so return an empty ResultMap
@@ -64,14 +64,32 @@ public class TFIDFItemScorer extends AbstractItemScorer {
         // Get the user's profile, which is a vector with their 'like' for each tag
         Map<String, Double> userVector = profileBuilder.makeUserProfile(ratings);
 
-        for (Long item: items) {
+        for (Long item : items) {
             Map<String, Double> iv = model.getItemVector(item);
 
             // TODO Compute the cosine of this item and the user's profile, store it in the output list
             // TODO And remove this exception to say you've implemented it
             // If the denominator of the cosine similarity is 0, skip the item
 
-            throw new UnsupportedOperationException("stub implementation");
+            double nominator = 0.0;
+            for (Map.Entry<String, Double> ivTag : iv.entrySet()) {
+                String tag = ivTag.getKey();
+                if (userVector.containsKey(tag)) {
+                    nominator += ivTag.getValue() * userVector.get(tag);
+                }
+            }
+            double denominator = Math.sqrt(iv.values().stream().map(e -> Math.pow(e, 2)).reduce(0.0, Double::sum))
+                    * Math.sqrt(userVector.values().stream().map(e -> Math.pow(e, 2)).reduce(0.0, Double::sum));
+
+            double score = nominator / denominator;
+            if (denominator > 0.0) {
+                results.add(Results.create(
+                        item,
+                        score
+                ));
+            }
+
+
         }
 
         return Results.newResultMap(results);
