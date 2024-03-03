@@ -14,11 +14,10 @@ import org.lenskit.util.math.Vectors;
 
 import javax.annotation.Nonnull;
 import javax.inject.Inject;
-import java.util.Collection;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.Map.Entry;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * User-user item scorer.
@@ -44,58 +43,63 @@ public class SimpleUserUserItemScorer extends AbstractItemScorer {
     @Override
     public ResultMap scoreWithDetails(long user, @Nonnull Collection<Long> items) {
         LongSet users = dao.getEntityIds(CommonTypes.USER);
-        List<Map.Entry<Long, Double>> similarities = calculateSimilarities(user, users).entrySet().stream()
-                .sorted(Map.Entry.<Long, Double>comparingByValue().reversed())
+
+        double targetUserMeanRating = meanRating(getUserRatingVector(user));
+        Map<Long, Long2DoubleOpenHashMap> normalizedUserRatings = normalizeUserRatings(users);
+        List<Entry<Long, Double>> similarities = calculateSimilarities(user, normalizedUserRatings).entrySet().stream()
+                .sorted(Entry.<Long, Double>comparingByValue().reversed())
                 .collect(Collectors.toList());
 
-        List<Result> scores = new LinkedList<>();
-        double targetUserMeanRating = meanRating(getUserRatingVector(user));
-
-        for (long item : items) {
-
-            int contributions = 0;
-            double weightedSumOfNeighbors = 0.0;
-            double sumOfSimilarities = 0.0;
-
-            for (Map.Entry<Long, Double> neighborSim : similarities) {
-                // For each item’s score, use the 30 most similar users who have rated the item and
-                // whose similarity to the target user is positive.
-                if (contributions >= neighborhoodSize || neighborSim.getValue() <= 0.0) {
-                    break;
-                }
-                Long neighborId = neighborSim.getKey();
-                Double neighborSimilarity = neighborSim.getValue();
-
-                Map<Long, Double> neighborRatings = normalizeRatingsVector(getUserRatingVector(neighborId));
-                if (neighborRatings.containsKey(item)) {
-                    weightedSumOfNeighbors += neighborSimilarity * neighborRatings.get(item);
-                    sumOfSimilarities += neighborSimilarity;
-                    contributions++;
-                }
-            }
-
-            // Refuse to score items if there are not at least 2 neighbors to contribute to the item’s score.
-            if (contributions >= 2) {
-                scores.add(Results.create(item, targetUserMeanRating + (weightedSumOfNeighbors / sumOfSimilarities)));
-            }
-
-        }
-
-        return Results.newResultMap(scores);
+        return Results.newResultMap(
+                items.stream()
+                        .map(item -> calculateItemScore(item, similarities, normalizedUserRatings, targetUserMeanRating))
+                        .flatMap(o -> o.map(Stream::of).orElseGet(Stream::empty))
+                        .collect(Collectors.toList())
+        );
     }
 
-    private Long2DoubleOpenHashMap calculateSimilarities(long user, LongSet users) {
-        Long2DoubleOpenHashMap similarities = new Long2DoubleOpenHashMap();
-        Long2DoubleOpenHashMap targetUserRatings = normalizeRatingsVector(getUserRatingVector(user));
+    private Optional<Result> calculateItemScore(long item, List<Entry<Long, Double>> similarities, Map<Long, Long2DoubleOpenHashMap> normalizedUserRatings, double targetUserMeanRating) {
+        int contributions = 0;
+        double weightedSumOfNeighbors = 0.0;
+        double sumOfSimilarities = 0.0;
 
-        for (long u : users) {
+        for (Entry<Long, Double> neighborSim : similarities) {
+            // For each item’s score, use the 30 most similar users who have rated the item and
+            // whose similarity to the target user is positive.
+            if (contributions >= neighborhoodSize || neighborSim.getValue() <= 0.0) {
+                break;
+            }
+            Long neighborId = neighborSim.getKey();
+            Double neighborSimilarity = neighborSim.getValue();
+
+            Map<Long, Double> neighborRatings = normalizedUserRatings.get(neighborId);
+            if (neighborRatings.containsKey(item)) {
+                weightedSumOfNeighbors += neighborSimilarity * neighborRatings.get(item);
+                sumOfSimilarities += neighborSimilarity;
+                contributions++;
+            }
+        }
+
+        // Refuse to score items if there are not at least 2 neighbors to contribute to the item’s score.
+        if (contributions >= 2) {
+            return Optional.of(Results.create(item, targetUserMeanRating + (weightedSumOfNeighbors / sumOfSimilarities)));
+        } else {
+            return Optional.empty();
+        }
+    }
+
+    private Long2DoubleOpenHashMap calculateSimilarities(long user, Map<Long, Long2DoubleOpenHashMap> normalizedUserRatings) {
+        Long2DoubleOpenHashMap similarities = new Long2DoubleOpenHashMap();
+        Long2DoubleOpenHashMap targetUserRatings = normalizedUserRatings.get(user);
+
+        for (long neighbor : normalizedUserRatings.keySet()) {
             // Skipping self-correlated user
-            if (u == user) {
+            if (neighbor == user) {
                 continue;
             }
 
-            Long2DoubleOpenHashMap neighborRatings = normalizeRatingsVector(getUserRatingVector(u));
-            similarities.put(u, cosineSimilarity(targetUserRatings, neighborRatings));
+            Long2DoubleOpenHashMap neighborRatings = normalizedUserRatings.get(neighbor);
+            similarities.put(neighbor, cosineSimilarity(targetUserRatings, neighborRatings));
         }
 
         return similarities;
@@ -108,6 +112,10 @@ public class SimpleUserUserItemScorer extends AbstractItemScorer {
             similarity = 0;
         }
         return similarity;
+    }
+
+    private Map<Long, Long2DoubleOpenHashMap> normalizeUserRatings(LongSet users) {
+        return users.stream().collect(Collectors.toMap(u -> u, u -> normalizeRatingsVector(getUserRatingVector(u))));
     }
 
     private Long2DoubleOpenHashMap normalizeRatingsVector(Long2DoubleOpenHashMap ratings) {
